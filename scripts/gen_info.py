@@ -7,6 +7,18 @@ from nuscenes.utils import splits
 
 
 def generate_info(nusc, scenes, max_cam_sweeps=6, max_lidar_sweeps=10):
+    """
+    Generate information for the given scenes in the NuScenes dataset.
+
+    Args:
+        nusc (NuScenes): The NuScenes dataset object.
+        scenes (list): A list of scene names to generate information for.
+        max_cam_sweeps (int): The maximum number of camera sweeps to include.
+        max_lidar_sweeps (int): The maximum number of lidar sweeps to include.
+
+    Returns:
+        list: A list of dictionaries containing information for each sample in the specified scenes.
+    """
     infos = list()
     for cur_scene in tqdm(nusc.scene):
         if cur_scene['name'] not in scenes:
