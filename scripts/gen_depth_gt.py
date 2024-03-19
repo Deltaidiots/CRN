@@ -6,7 +6,7 @@ import numpy as np
 from nuscenes.utils.data_classes import LidarPointCloud
 from nuscenes.utils.geometry_utils import view_points
 from pyquaternion import Quaternion
-
+import matplotlib.pyplot as plt
 
 # https://github.com/nutonomy/nuscenes-devkit/blob/master/python-sdk/nuscenes/nuscenes.py#L834
 def map_pointcloud_to_image(
@@ -16,6 +16,33 @@ def map_pointcloud_to_image(
     cam_ego_pose,
     min_dist: float = 0.0,
 ):
+    """
+    Map a point cloud to an image using camera calibration and ego pose.
+
+    This function takes a point cloud from a LiDAR sensor and projects it onto the 2D image captured by a camera. It accounts for the position and orientation of both the vehicle (ego pose) and the camera (calibrated sensor data). The function performs several coordinate transformations to align the 3D point cloud with the 2D camera image plane and then projects the points onto the image. Points that are too close, behind the camera, or fall outside the image frame are filtered out.
+
+    Args:
+        pc (np.ndarray): The point cloud data as a Numpy array with shape (N, 4), where N is the number of points.
+        im (np.ndarray): The camera image data as a 2D Numpy array.
+        cam_calibrated_sensor (dict): The calibrated sensor metadata for the camera, including translation and rotation.
+        cam_ego_pose (dict): The ego pose metadata for the vehicle, including translation and rotation.
+        min_dist (float, optional): Minimum distance threshold for points to be considered valid. Defaults to 0.0, allowing all points.
+
+    Returns:
+        tuple: A tuple containing two elements:
+            - np.ndarray: The 2D points projected onto the image plane, with shape (2, M), where M is the number of valid points.
+            - np.ndarray: The corresponding depth values for the projected points as a 1D Numpy array with shape (M,).
+    
+    Example:
+        # Example usage of the function with a sample LiDAR point cloud and camera image
+        projected_points, depths = map_pointcloud_to_image(
+            pc=np.random.rand(100, 4),
+            im=np.random.rand(1200, 1600, 3),
+            cam_calibrated_sensor={'translation': [0, 0, 0], 'rotation': [1, 0, 0, 0], 'camera_intrinsic': [[1, 0, 0], [0, 1, 0], [0, 0, 1]]},
+            cam_ego_pose={'translation': [0, 0, 0], 'rotation': [1, 0, 0, 0]},
+            min_dist=1.0
+        )
+    """
     pc = LidarPointCloud(pc)
 
     # Third step: transform from global into the ego vehicle
@@ -67,6 +94,15 @@ cam_keys = [
 
 
 def worker(info):
+    """
+    Process lidar and camera data to generate depth ground truth images.
+
+    Args:
+        info (dict): A dictionary containing lidar and camera information.
+
+    Returns:
+        None
+    """
     lidar_path = info['lidar_infos'][lidar_key]['filename']
     points = np.fromfile(os.path.join(data_root, lidar_path),
                          dtype=np.float32,
@@ -100,6 +136,13 @@ def worker(info):
                        axis=1).astype(np.float32).flatten().tofile(
                            os.path.join(data_root, 'depth_gt',
                                         f'{file_name}.bin'))
+        # plot mapped points on image
+        # plt.figure(figsize=(10, 10))
+        # plt.imshow(img)
+        # plt.scatter(pts_img[0], pts_img[1], c=depth, s=5)
+        # plt.colorbar()
+        # plt.title(f"{i}")
+        # plt.show()
     # plt.savefig(f"{sample_idx}")
 
 
