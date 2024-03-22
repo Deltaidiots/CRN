@@ -55,6 +55,30 @@ else:
 
 
 def worker(info):
+    """
+    Transforms and aggregates radar data points across multiple sweeps into the BEV format aligned with the vehicle's reference frame.
+
+    This function processes a given nuScenes sample by aggregating radar points from the current and previous sweeps, 
+    transforming each point's coordinates and velocities into the vehicle's reference frame, and compensating for the movement of detected objects. 
+    The transformed and compensated points are then filtered based on predefined distance thresholds and saved for further processing.
+
+    Args:
+        info (dict): A dictionary containing metadata and file paths for radar and LiDAR data for a single sample in the nuScenes dataset.
+                     Expected keys include 'lidar_infos', 'sample_token', and paths to radar sweep files.
+
+    Procedure:
+    - For each radar channel, it loads the current sweep's data and recursively loads previous sweeps up to N_SWEEPS.
+    - Each sweep's radar points are transformed from their original sensor frame to a common vehicle reference frame using a series of transformations.
+    - Radar point velocities are rotated to align with the vehicle's reference frame.
+    - Points on moving objects are compensated based on their velocities to more accurately reflect their current positions.
+    - Points are filtered out if they are closer than MIN_DISTANCE or farther than MAX_DISTANCE from the sensor.
+    - The processed points are saved in a binary file for each radar sweep.
+
+    Note: This function is designed to be run in parallel for each sample in the dataset to efficiently process large volumes of radar data.
+
+    Returns:
+        None
+    """
     # Init.
     points = np.zeros((18, 0))
     all_pc = RadarPointCloud(points)
