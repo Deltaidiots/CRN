@@ -1,0 +1,59 @@
+
+@startuml CRN_Architecture
+skinparam monochrome true
+
+participant "Input Image" as Input
+participant "CNN (e.g., ResNet)" as CNN
+participant "Image Feature
+Encoding" as ImgFeatureEnc
+participant "Depth Distribution
+Calculation" as DepthDist
+participant "Input Radar Points" as RadarInput
+participant "Radar Point
+Projection & Voxelization" as RadarProj
+participant "Radar Feature
+Encoding" as RadarFeatureEnc
+participant "Radar Occupancy
+Calculation" as RadarOcc
+participant "Radar-assisted View
+Transformation (RVT)" as RVT
+participant "BEV Feature Map
+(Image)" as BEVImg
+participant "BEV Feature Map
+(Radar)" as BEVRadar
+participant "Multi-modal Feature
+Aggregation (MFA)" as MFA
+participant "Fused BEV Feature
+Map" as FusedBEV
+participant "Downstream Tasks
+(Detection, Tracking, etc.)" as Tasks
+
+Input -> CNN : Extracts feature maps
+CNN -> ImgFeatureEnc : Obtains image context
+features & initial depth distribution
+ImgFeatureEnc -> DepthDist : Refines depth distribution
+
+RadarInput -> RadarProj : Projects radar points to
+camera view & voxelizes
+RadarProj -> RadarFeatureEnc : Encodes radar features
+RadarFeatureEnc -> RadarOcc : Determines radar occupancy
+
+ImgFeatureEnc -> RVT : Transforms image features
+to camera frustum view
+RadarFeatureEnc -> RVT : Provides accurate depth
+information
+RVT -> BEVImg : Transforms to BEV
+(using both depth & radar data)
+RVT -> BEVRadar : Encodes radar features
+in BEV
+
+BEVImg -> MFA : Provides semantically rich
+image features in BEV
+BEVRadar -> MFA : Provides spatially accurate
+radar features in BEV
+MFA -> FusedBEV : Fuses image and radar
+features adaptively
+FusedBEV -> Tasks : Applies to various
+downstream tasks
+
+@enduml

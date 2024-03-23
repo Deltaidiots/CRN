@@ -1,0 +1,46 @@
+
+@startuml CRN_MFA_RVT_UML
+
+package "CRN Architecture" {
+
+    class "Multi-modal Feature Aggregation (MFA)" {
+        +forward(features, positions) : fused_features
+    }
+
+    class "Radar-assisted View Transformation (RVT)" {
+        +forward(image, radar) : transformed_features
+    }
+
+    class "Positional Encoding" {
+    }
+
+    class "Deformable Cross Attention" {
+    }
+
+    class "Feed-forward Network" {
+    }
+
+    class "Normalization Layer" {
+    }
+
+    class "DepthNet" {
+    }
+
+    class "ViewAggregation" {
+    }
+
+    class "Voxel Pooling" {
+    }
+
+    "Multi-modal Feature Aggregation (MFA)" --> "Positional Encoding" : uses
+    "Multi-modal Feature Aggregation (MFA)" --> "Deformable Cross Attention" : uses
+    "Multi-modal Feature Aggregation (MFA)" --> "Feed-forward Network" : uses
+    "Multi-modal Feature Aggregation (MFA)" --> "Normalization Layer" : uses
+
+    "Radar-assisted View Transformation (RVT)" --> "DepthNet" : uses
+    "Radar-assisted View Transformation (RVT)" --> "ViewAggregation" : uses
+    "Radar-assisted View Transformation (RVT)" --> "Voxel Pooling" : uses
+
+}
+
+@enduml

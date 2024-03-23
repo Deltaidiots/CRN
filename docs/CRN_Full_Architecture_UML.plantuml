@@ -1,0 +1,80 @@
+
+@startuml CRN_Full_Architecture_UML
+
+package "CRN Architecture" {
+
+    class "Camera Data Processing" {
+        +extract_features() : image_features
+    }
+
+    class "Radar Data Processing" {
+        +voxelize() : voxel_features
+        +encode_features() : radar_features
+    }
+
+    class "Multi-modal Feature Aggregation (MFA)" {
+        +forward(features, positions) : fused_features
+    }
+
+    class "Radar-assisted View Transformation (RVT)" {
+        +forward(image, radar) : transformed_features
+    }
+
+    class "Positional Encoding" {
+    }
+
+    class "Deformable Cross Attention" {
+    }
+
+    class "Feed-forward Network" {
+    }
+
+    class "Normalization Layer" {
+    }
+
+    class "DepthNet" {
+    }
+
+    class "ViewAggregation" {
+    }
+
+    class "Voxel Pooling" {
+    }
+
+    class "Depth Distribution Prediction" {
+    }
+
+    class "Frustum View Transformation" {
+    }
+
+    class "Sparse Voxel Pooling" {
+    }
+
+    class "Final BEV Feature Map Generation" {
+    }
+
+    class "Downstream Tasks" {
+        +object_detection()
+        +object_tracking()
+        +semantic_segmentation()
+    }
+
+    "Camera Data Processing" --> "Radar-assisted View Transformation (RVT)" : provides image features
+    "Radar Data Processing" --> "Radar-assisted View Transformation (RVT)" : provides radar features
+    "Radar-assisted View Transformation (RVT)" --> "Multi-modal Feature Aggregation (MFA)" : provides transformed features
+    "Multi-modal Feature Aggregation (MFA)" --> "Positional Encoding" : uses
+    "Multi-modal Feature Aggregation (MFA)" --> "Deformable Cross Attention" : uses
+    "Multi-modal Feature Aggregation (MFA)" --> "Feed-forward Network" : uses
+    "Multi-modal Feature Aggregation (MFA)" --> "Normalization Layer" : uses
+    "Radar-assisted View Transformation (RVT)" --> "DepthNet" : uses
+    "Radar-assisted View Transformation (RVT)" --> "ViewAggregation" : uses
+    "Radar-assisted View Transformation (RVT)" --> "Voxel Pooling" : uses
+    "DepthNet" --> "Depth Distribution Prediction" : calculates
+    "ViewAggregation" --> "Frustum View Transformation" : applies
+    "Voxel Pooling" --> "Sparse Voxel Pooling" : implements
+    "Radar-assisted View Transformation (RVT)" --> "Final BEV Feature Map Generation" : results in
+    "Final BEV Feature Map Generation" --> "Downstream Tasks" : inputs into
+
+}
+
+@enduml
