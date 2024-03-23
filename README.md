@@ -33,7 +33,12 @@ conda activate CRN
 
 # install dependencies
 pip install torch==1.9.1+cu111 torchvision==0.10.1+cu111 -f https://download.pytorch.org/whl/torch_stable.html
+# pip install pytorch-lightning==1.6.0 --no-deps
+# pip install fsspec==2021.7.0
+# pip install "torchmetrics==0.4.1"
+# pip install "pyDeprecate<0.4.0,>=0.3.1" 
 pip install pytorch-lightning==1.6.0
+
 mim install mmcv==1.6.0
 mim install mmsegmentation==0.28.0
 mim install mmdet==2.25.2
