@@ -156,7 +156,8 @@ def worker(info):
     points = points[mask, :]
 
     file_name = os.path.split(info['lidar_infos']['LIDAR_TOP']['filename'])[-1]
-    points.tofile(os.path.join(DATA_PATH, OUT_PATH, file_name))
+    if ~DEBUG:
+        points.tofile(os.path.join(DATA_PATH, OUT_PATH, file_name))
 
     if DEBUG:
         fig, ax = plt.subplots(figsize=(12, 12))
