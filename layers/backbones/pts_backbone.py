@@ -5,13 +5,25 @@ from torch import nn
 from mmcv.cnn import bias_init_with_prob
 from mmcv.ops import Voxelization
 from mmdet3d.models import builder
-
+import numpy as np
+import matplotlib.pyplot as plt
 
 class PtsBackbone(nn.Module):
-    """Pillar Feature Net.
+    """
+    Pillar Feature Net for processing point clouds.
 
-    The network prepares the pillar features and performs forward pass
-    through PFNLayers.
+    This network module is designed to process point cloud data, preparing the pillar
+    features and performing a forward pass through PFNLayers to generate context features
+    and occupancy grids.
+
+    Attributes:
+        pts_voxel_layer: A Voxelization layer for converting point clouds into voxels.
+        pts_voxel_encoder: A voxel encoder module for encoding voxel features.
+        pts_middle_encoder: A middle encoder module for processing encoded voxel features.
+        pts_backbone: A backbone network for feature extraction from processed voxels.
+        pts_neck (optional): A neck module for further processing of backbone features.
+        return_context (bool): Whether to return context features. Default to True.
+        return_occupancy (bool): Whether to return occupancy grid. Default to True.
 
     Args:
         in_channels (int, optional): Number of input features,
@@ -102,12 +114,49 @@ class PtsBackbone(nn.Module):
             else:
                 occupancy_init = 0.01
             self.pred_occupancy[-1].bias.data.fill_(bias_init_with_prob(occupancy_init))
+    def visualize_voxels_with_points_distinct(voxels, coors, voxel_size, point_cloud_range):
+        voxels_np = voxels.cpu().numpy()
+        coors_np = coors.cpu().numpy()
+
+        # Determine the grid bounds
+        x_min, y_min, _, x_max, y_max, _ = point_cloud_range
+        x_range = np.arange(x_min, x_max, voxel_size[0])
+        y_range = np.arange(y_min, y_max, voxel_size[1])
+
+        plt.figure(figsize=(12, 12))
+        for x in x_range:
+            plt.axvline(x, color='k', linestyle='--', linewidth=0.5)
+        for y in y_range:
+            plt.axhline(y, color='k', linestyle='--', linewidth=0.5)
+
+        # Plot each voxel's points
+        for idx, coor in enumerate(coors_np):
+            voxel_points = voxels_np[idx]
+            for point_idx, point in enumerate(voxel_points):
+                if point[0] != -999:  # Filter out padding values
+                    # Convert voxel coordinates to plot coordinates
+                    plot_x = (coor[2] * voxel_size[0]) + x_min + voxel_size[0] / 2
+                    plot_y = (coor[1] * voxel_size[1]) + y_min + voxel_size[1] / 2
+                    # Add a small random offset to each point's position within the voxel
+                    offset_x = np.random.uniform(-voxel_size[0] / 2, voxel_size[0] / 2)
+                    offset_y = np.random.uniform(-voxel_size[1] / 2, voxel_size[1] / 2)
+                    plot_x += offset_x
+                    plot_y += offset_y
+                    plt.plot(plot_x, plot_y, 'ro')
+
+        plt.xlim([x_min, x_max])
+        plt.ylim([y_min, y_max])
+        plt.xlabel('Width')
+        plt.ylabel('Depth')
+        plt.title('Voxelized Radar Points with Grid')
+        plt.show()
+
 
     def voxelize(self, points):
         """Apply dynamic voxelization to points.
 
         Args:
-            points (list[torch.Tensor]): Points of each sample.
+            points (list[torch.Tensor]): Points of each sample/sweep.
 
         Returns:
             tuple[torch.Tensor]: Concatenated points, number of points
@@ -118,7 +167,10 @@ class PtsBackbone(nn.Module):
         points_list = [points[i] for i in range(batch_size)]
 
         for res in points_list:
+            # res shape is (P, F) e.g (1536 or x, 5)
+            # plot_original_radar_points(res)
             res_voxels, res_coors, res_num_points = self.pts_voxel_layer(res)
+            # visualize_voxels_with_points(res_voxels, res_coors, voxel_size=[8, 0.4, 2], point_cloud_range=[0, 2.0, 0, 704, 58.0, 2])
             voxels.append(res_voxels)
             coors.append(res_coors)
             num_points.append(res_num_points)
@@ -132,6 +184,20 @@ class PtsBackbone(nn.Module):
         return voxels, num_points, coors_batch
 
     def _forward_single_sweep(self, pts):
+        """
+        Perform a forward pass for a single sweep.
+
+        Args:
+            pts (torch.Tensor): Input points tensor of shape (B, N, P, F), where
+                B is the batch size, N is the number of points, P is the number of
+                points, and F is the number of features.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: A tuple containing the context tensor
+            of shape (B, 1, C) and the occupancy tensor of shape (B, 1, P), where C
+            is the number of context features and P is the number of voxels.
+
+        """
         if self.times is not None:
             t1 = torch.cuda.Event(enable_timing=True)
             t2 = torch.cuda.Event(enable_timing=True)
@@ -143,16 +209,20 @@ class PtsBackbone(nn.Module):
         B, N, P, F = pts.shape
         batch_size = B * N
         pts = pts.contiguous().view(B*N, P, F)
-
+        # points shape is (B*N, P, F) e.g (6, 1536 or x, 5)
         voxels, num_points, coors = self.voxelize(pts)
+        # voxels shape is (num_point, self.pts_voxel_layer.max_num_points, F) e.g (170,8,5)
         if self.times is not None:
             t2.record()
             torch.cuda.synchronize()
             self.times['pts_voxelize'].append(t1.elapsed_time(t2))
 
         voxel_features = self.pts_voxel_encoder(voxels, num_points, coors)
+        # voxel_features shape is (num_point, self.pts_voxel_encoder.num_features) e.g (170, 64)
         x = self.pts_middle_encoder(voxel_features, coors, batch_size)
+        # x shape is (B*N, C, H, W) e.g (6, 64, self.pts_middle_encoder.output_shape[0], self.pts_middle_encoder.output_shape[1])
         x = self.pts_backbone(x)
+        # x shape is tuple of length 3 where each element is (B*N, C, H, W) e.g 6, 64, 140, 88),(6, 128, 70, 44),(6, 256, 35, 22)
         if self.pts_neck is not None:
             x = self.pts_neck(x)
 
