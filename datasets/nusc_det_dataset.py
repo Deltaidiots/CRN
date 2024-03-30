@@ -235,7 +235,16 @@ class NuscDatasetRadarDet(Dataset):
         return sample_indices
 
     def sample_ida_augmentation(self):
-        """Generate ida augmentation values based on ida_config."""
+        """Generate ida augmentation values based on ida_config.
+
+        Returns:
+            tuple: A tuple containing the following augmentation values:
+                - resize (float): The resize factor.
+                - resize_dims (tuple): The dimensions after resizing.
+                - crop (tuple): The crop coordinates (left, top, right, bottom).
+                - flip (bool): Whether to flip the image.
+                - rotate_ida (float): The rotation angle in degrees.
+        """
         H, W = self.ida_aug_conf['H'], self.ida_aug_conf['W']
         fH, fW = self.ida_aug_conf['final_dim']
         if self.is_train:
@@ -264,7 +273,15 @@ class NuscDatasetRadarDet(Dataset):
         return resize, resize_dims, crop, flip, rotate_ida
 
     def sample_bda_augmentation(self):
-        """Generate bda augmentation values based on bda_config."""
+        """Generate bda augmentation values based on bda_config.
+
+        Returns:
+            Tuple[float, float, bool, bool]: A tuple containing the generated augmentation values.
+                - rotate_bda (float): The rotation augmentation value.
+                - scale_bda (float): The scale augmentation value.
+                - flip_dx (bool): Whether to flip along the x-axis.
+                - flip_dy (bool): Whether to flip along the y-axis.
+        """
         if self.is_train:
             if np.random.uniform() < self.bda_aug_conf['rot_ratio']:
                 rotate_bda = np.random.uniform(*self.bda_aug_conf['rot_lim'])
@@ -281,7 +298,11 @@ class NuscDatasetRadarDet(Dataset):
         return rotate_bda, scale_bda, flip_dx, flip_dy
 
     def sample_radar_augmentation(self):
-        """Generate bda augmentation values based on bda_config."""
+        """Generate bda augmentation values based on bda_config.
+
+        Returns:
+            numpy.ndarray: An array of radar indices representing the selected radar sweeps for augmentation.
+        """
         if self.is_train:
             radar_idx = np.random.choice(self.rda_aug_conf['N_sweeps'],
                                          self.rda_aug_conf['N_use'],
@@ -291,12 +312,34 @@ class NuscDatasetRadarDet(Dataset):
         return radar_idx
 
     def transform_radar_pv(self, points, resize, resize_dims, crop, flip, rotate, radar_idx):
+        """
+        Transforms the radar points based on the given parameters.
+
+        Args:
+            points (numpy.ndarray): The radar points to be transformed.
+            resize (float): The resize factor for the points.
+            resize_dims (tuple): The dimensions to resize the points to.
+            crop (tuple): The crop values to apply to the points.
+            flip (bool): Whether to flip the points horizontally.
+            rotate (float): The rotation angle in degrees to apply to the points.
+            radar_idx (list): The indices of the radar points to keep.
+
+        Returns:
+            torch.Tensor: The transformed radar points.
+
+        Raises:
+            None
+        """
+        # Function code goes here
+        # Remove points that are too far away from the ego vehicle (percpective view points)
         points = points[points[:, 2] < self.max_distance_pv, :]
+        #points shape: (n, 7) [x, y, z, rcs, vx, vy, sweep]
 
         H, W = resize_dims
         points[:, :2] = points[:, :2] * resize
         points[:, 0] -= crop[0]
         points[:, 1] -= crop[1]
+
         if flip:
             points[:, 0] = resize_dims[1] - points[:, 0]
 
@@ -323,7 +366,7 @@ class NuscDatasetRadarDet(Dataset):
         points = torch.Tensor(points[valid_mask])
 
         if self.remove_z_axis:
-            points[:, 1] = 1.  # dummy height value
+            points[:, 1] = 1.0  # dummy height value for POintPillars compatibility
 
         points_save = []
         for i in radar_idx:
@@ -349,7 +392,7 @@ class NuscDatasetRadarDet(Dataset):
         if num_points == 0:
             points[0, :] = points.new_tensor([0.1, 0.1, self.max_distance_pv-1, 0, 0, 0, 0])
 
-        points[..., [0, 1, 2]] = points[..., [0, 2, 1]]  # convert [w, h, d] to [w, d, h]
+        points[..., [0, 1, 2]] = points[..., [0, 2, 1]]  # convert [w, h, d] to [w, d, h] for voxelization to account for spatial alignment
 
         return points[..., :5]
 
@@ -520,6 +563,7 @@ class NuscDatasetRadarDet(Dataset):
                         self.data_root, self.radar_pv_path, f'{file_name}.bin'),
                         dtype=np.float32,
                         count=-1).reshape(-1, 7)
+                    #radar_point shape: (n, 7) [x, y, z, rcs, vx_comp, vy_comp, (dummy field for sweep info)]
                     radar_point_augmented = self.transform_radar_pv(
                         radar_point, resize, self.ida_aug_conf['final_dim'],
                         crop, flip, rotate_ida, radar_idx)
@@ -585,6 +629,19 @@ class NuscDatasetRadarDet(Dataset):
         return img_metas
 
     def get_image_sensor2ego_mats(self, cam_infos, cams):
+        """
+        Computes and returns the transformation matrices from image sensor to ego vehicle coordinates.
+
+        Args:
+            cam_infos (list): List of camera information dictionaries.
+            cams (list): List of camera names.
+
+        Returns:
+            torch.Tensor: Tensor containing the transformation matrices from image sensor to ego vehicle coordinates.
+                          The shape of the tensor is (num_cams, num_sweeps, 4, 4), where num_cams is the number of cameras
+                          and num_sweeps is the number of sweeps.
+
+        """
         sweep_sensor2ego_mats = list()
         for cam in cams:
             sensor2ego_mats = list()
@@ -713,6 +770,27 @@ class NuscDatasetRadarDet(Dataset):
         return cams
 
     def __getitem__(self, idx):
+        """
+        Get the item at the specified index.
+
+        Args:
+            idx (int): The index of the item to retrieve.
+
+        Returns:
+            list: A list containing the following elements:
+                - sweep_imgs: The sweep images.
+                - sweep_sensor2ego_mats: The transformation matrices from sensor to ego coordinates for each sweep image.
+                - sweep_intrins: The intrinsic camera parameters for each sweep image.
+                - sweep_ida_mats: The transformation matrices from image coordinates to ego coordinates for each sweep image.
+                - sweep_sensor2sensor_mats: The transformation matrices from sensor to sensor coordinates for each sweep image.
+                - bda_mat: The transformation matrix for bird's eye view detection augmentation.
+                - sweep_timestamps: The timestamps for each sweep image.
+                - img_metas: The metadata for the image.
+                - gt_boxes_3d: The 3D ground truth bounding boxes.
+                - gt_labels_3d: The ground truth labels for the 3D bounding boxes.
+                - depth_data: The depth data (optional, only returned if `return_depth` is True).
+                - radar_pv_data: The radar point-velocity data (optional, only returned if `return_radar_pv` is True).
+        """
         if self.use_cbgs:
             idx = self.sample_indices[idx]
         cam_infos = list()
@@ -732,10 +810,8 @@ class NuscDatasetRadarDet(Dataset):
                     cam_infos.append(info['cam_infos'])
                 else:
                     # Handle scenarios when current sweep doesn't have all cam keys.
-                    for i in range(min(len(info['cam_sweeps']) - 1, sweep_idx), -1,
-                                   -1):
-                        if sum([cam in info['cam_sweeps'][i]
-                                for cam in cams]) == len(cams):
+                    for i in range(min(len(info['cam_sweeps']) - 1, sweep_idx), -1, -1):
+                        if sum([cam in info['cam_sweeps'][i] for cam in cams]) == len(cams):
                             cam_infos.append(info['cam_sweeps'][i])
                             break
 
