@@ -127,6 +127,7 @@ class DeformableCrossAttention(BaseModule):
                 reference_points=None,
                 spatial_shapes=None,
                 level_start_index=None,
+                return_attention_weights=False,
                 ):
         """Forward Function of DeformableCrossAttention.
         Args:
@@ -195,6 +196,8 @@ class DeformableCrossAttention(BaseModule):
         output = MultiScaleDeformableAttnFunction_fp32.apply(
             value, spatial_shapes, level_start_index, sampling_locations,
             attention_weights, self.im2col_step)
-
-        return self.dropout(output) + identity
+        if return_attention_weights:
+            return self.dropout(output) + identity, attention_weights
+        else:
+            return self.dropout(output) + identity
 

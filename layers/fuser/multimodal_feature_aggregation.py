@@ -63,6 +63,7 @@ class MFAFuser(nn.Module):
             )
         self.norm_layers2 = ModuleList()
         for _ in range(num_layers):
+
             self.norm_layers2.append(
                 build_norm_layer(norm_cfgs, self.embed_dims)[1],
             )
@@ -130,7 +131,7 @@ class MFAFuser(nn.Module):
         return ref_2d
 
     @auto_fp16(apply_to=('feat_img', 'feat_pts'))
-    def _forward_single_sweep(self, feat_img, feat_pts):
+    def _forward_single_sweep(self, feat_img, feat_pts, return_attention_weights=False):
         if self.times is not None:
             t1 = torch.cuda.Event(enable_timing=True)
             t2 = torch.cuda.Event(enable_timing=True)
@@ -140,8 +141,10 @@ class MFAFuser(nn.Module):
             torch.cuda.synchronize()
 
         bs = feat_img.shape[0]
-        ref_2d_stack = self.ref_2d.repeat(bs, 1, 1, self.num_modalities, 1)
-
+        # get reference points for calculating offset
+        ref_2d_stack = self.ref_2d.repeat(bs, 1, 1, self.num_modalities, 1) # ref_2d_stack shape: [bs, num_queries, num_heads, num_modalities, 2]
+        
+        # apply layer norm to input features and permute to [bs, c, X, Y]
         feat_img = self.norm_img(feat_img.permute(0, 2, 3, 1).contiguous()).permute(0, 3, 1, 2).contiguous()
         feat_pts = self.norm_pts(feat_pts.permute(0, 2, 3, 1).contiguous()).permute(0, 3, 1, 2).contiguous()
 
@@ -153,6 +156,7 @@ class MFAFuser(nn.Module):
             feat = feat.flatten(2).permute(0, 2, 1).contiguous()  # [bs, num_cam, c, dw] -> [num_cam, bs, dw, c]
             spatial_shapes.append(spatial_shape)
             feat_flatten.append(feat)
+        # feat_flatten[0] shape is [bs, num_queries, C]
 
         spatial_shapes = torch.as_tensor(
             spatial_shapes, dtype=torch.long, device=feat_img.device)
@@ -160,24 +164,24 @@ class MFAFuser(nn.Module):
             (1,)), spatial_shapes.prod(1).cumsum(0)[:-1]))
 
         bev_queries = torch.cat(feat_flatten, -1)
+        # bev_queries: [bs, num_queries, C]
         bev_queries = self.input_proj(bev_queries)
-
+        # bev_queries: [bs, num_queries, embed_dims]
         bev_mask = torch.zeros((bs, self.bev_h, self.bev_w),
                                device=bev_queries.device).to(feat_img.dtype)
         bev_pos = self.positional_encoding(bev_mask).to(feat_img.dtype)
         bev_pos = bev_pos.flatten(2).permute(0, 2, 1).contiguous()
-
+        # bev_pos: [bs, num_queries, embed_dims]
         feat_img = feat_flatten[0]
         feat_pts = feat_flatten[1]
         if self.times is not None:
             t2.record()
             torch.cuda.synchronize()
             self.times['fusion_pre'].append(t1.elapsed_time(t2))
-
         for attn_layer, ffn_layer, norm_layer1, norm_layer2 in \
             zip(self.attn_layers, self.ffn_layers, self.norm_layers1, self.norm_layers2):
             # post norm
-            bev_queries = attn_layer(
+            bev_queries, attention_weights  = attn_layer(
                 bev_queries,
                 feat_img,
                 feat_pts,
@@ -186,7 +190,9 @@ class MFAFuser(nn.Module):
                 reference_points=ref_2d_stack,
                 spatial_shapes=spatial_shapes,
                 level_start_index=level_start_index,
+                return_attention_weights=True
                 )
+            # shape of attention_weights: [bs, num_queries, num_heads, 2 modalities, 4 sampling points]
             bev_queries = norm_layer1(bev_queries)
             bev_queries = ffn_layer(bev_queries, identity=None)
             bev_queries = norm_layer2(bev_queries)
@@ -194,14 +200,22 @@ class MFAFuser(nn.Module):
             t3.record()
             torch.cuda.synchronize()
             self.times['fusion_layer'].append(t2.elapsed_time(t3))
-
+        # bev_queries: [bs, num_queries, embed_dims]
         output = bev_queries.permute(0, 2, 1).contiguous().reshape(bs, self.embed_dims, h, w)
+        # Assuming attention_weights is the tensor with shape [1, 16384, 4, 2, 4]
+        # Average the attention across heads, modalities, and sampling points
+        attention_avg = attention_weights.mean(dim=[2, 3, 4])  # Resulting shape: [1, 16384]
+
+        # Reshape to the original spatial grid (HxW, where H=W=128 for a square grid)
+        attention_map = attention_avg.reshape(-1, h, w)  # Reshaping to [1, H, W]
         if self.times is not None:
             t4.record()
             torch.cuda.synchronize()
             self.times['fusion_post'].append(t3.elapsed_time(t4))
-
-        return output
+        if return_attention_weights:
+            return output, attention_map
+        else:
+            return output
 
     def forward(self, feats, times=None):
         self.times = times
@@ -212,9 +226,11 @@ class MFAFuser(nn.Module):
             torch.cuda.synchronize()
 
         num_sweeps = feats.shape[1]
-        key_frame_res = self._forward_single_sweep(
-            feats[:, 0, :self.img_dims],
-            feats[:, 0, self.img_dims:self.img_dims+self.pts_dims]
+        # single sweep takes img and radar features separately 
+        key_frame_res, key_attn_map = self._forward_single_sweep(
+            feats[:, 0, :self.img_dims], # img features
+            feats[:, 0, self.img_dims:self.img_dims+self.pts_dims], # pts features
+            return_attention_weights=True
         )
         if self.times is not None:
             t2.record()
@@ -225,11 +241,16 @@ class MFAFuser(nn.Module):
             return key_frame_res, self.times
 
         ret_feature_list = [key_frame_res]
+        ret_attn_map_list = [key_attn_map]
         for sweep_index in range(1, num_sweeps):
             with torch.no_grad():
-                feature_map = self._forward_single_sweep(
+                feature_map, attn_map = self._forward_single_sweep(
                     feats[:, sweep_index, :self.img_dims],
-                    feats[:, sweep_index, self.img_dims:self.img_dims+self.pts_dims])
+                    feats[:, sweep_index, self.img_dims:self.img_dims+self.pts_dims], 
+                    return_attention_weights=True)
                 ret_feature_list.append(feature_map)
-
-        return self.reduce_conv(torch.cat(ret_feature_list, 1)).float(), self.times
+                ret_attn_map_list.append(attn_map)
+        # reshape attn_map_list to [bs, num_Sweeps, h, w]
+        attn_maps_tensor = torch.stack(ret_attn_map_list, dim=1)
+        output = self.reduce_conv(torch.cat(ret_feature_list, 1)).float()
+        return output, self.times, attn_maps_tensor

@@ -103,12 +103,16 @@ class CameraRadarNetDet(BaseBEVDepth):
 
             ptss_context, ptss_occupancy, self.times = self.backbone_pts(sweep_ptss,
                                                                          times=self.times)
-            feats, self.times = self.backbone_img(sweep_imgs,
+            # shape of ptss_context: (B, num_sweeps, C, D, W)
+            # shape of ptss_occupancy: (B, num_sweeps, 1, D, W)
+            feats, self.times = self.backbone_img(sweep_imgs,   # sweep_imgs: (B, num_sweeps,num_cams,  C, H, W)
                                                   mats_dict,
                                                   ptss_context,
                                                   ptss_occupancy,
                                                   times=self.times)
-            fused, self.times = self.fuser(feats, times=self.times)
+            # shape of feats: (B, num_sweeps, C, H, W) converted to bev grid of 128x128 here c includes image plus depth
+            fused, self.times, attn_maps = self.fuser(feats, times=self.times)
+            # shape of fused: (B, C, H, W) C is embedding size
             preds, self.times = self.head(fused, times=self.times)
 
             if self.idx == 1000:

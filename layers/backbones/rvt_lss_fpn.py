@@ -186,6 +186,21 @@ class RVTLSSFPN(BaseLSSFPN):
 
     def get_geometry_collapsed(self, sensor2ego_mat, intrin_mat, ida_mat, bda_mat,
                                z_min=-5., z_max=3.):
+        """
+        Get the collapsed geometry based on the input matrices and parameters.
+
+        Args:
+            sensor2ego_mat (torch.Tensor): Transformation matrix from sensor to ego coordinates.
+            intrin_mat (torch.Tensor): Intrinsic matrix of the camera.
+            ida_mat (torch.Tensor): IDA matrix.
+            bda_mat (torch.Tensor): BDA matrix.
+            z_min (float, optional): Minimum z-coordinate value. Defaults to -5.
+            z_max (float, optional): Maximum z-coordinate value. Defaults to 3.
+
+        Returns:
+            torch.Tensor: Collapsed points in the shape (batch_size, num_cams, 1, 1, 1, 1, 3).
+            torch.Tensor: Boolean mask indicating the validity of z-coordinates in the shape (batch_size, num_cams, 1, 1, 1).
+        """
         batch_size, num_cams, _, _ = sensor2ego_mat.shape
 
         # undo post-transformation
@@ -228,6 +243,18 @@ class RVTLSSFPN(BaseLSSFPN):
         return self.depth_net(feat, mats_dict)
 
     def _split_batch_cam(self, feat, inv=False, num_cams=6):
+        """
+        Splits the input feature tensor into multiple batches based on the number of cameras.
+
+        Args:
+            feat (torch.Tensor): The input feature tensor.
+            inv (bool, optional): If True, performs inverse operation of splitting. Defaults to False.
+            num_cams (int, optional): The number of cameras. Defaults to 6.
+
+        Returns:
+            torch.Tensor: The reshaped feature tensor.
+
+        """
         batch_size = feat.shape[0]
         if not inv:
             return feat.reshape(batch_size // num_cams, num_cams, *feat.shape[1:])
@@ -274,8 +301,9 @@ class RVTLSSFPN(BaseLSSFPN):
         batch_size, num_sweeps, num_cams, num_channels, img_height, \
             img_width = sweep_imgs.shape
 
-        # extract image feature
+        # extract image feature using self.img_neck
         img_feats = self.get_cam_feats(sweep_imgs)
+        # shape of img_feats: [B,num_sweep, num_cams, C (sum(self.img_neck.outchannel)), H, W] e.g [1, 1, 6, 512, 16, 44]
         if self.times is not None:
             t2.record()
             torch.cuda.synchronize()
@@ -283,23 +311,29 @@ class RVTLSSFPN(BaseLSSFPN):
 
         source_features = img_feats[:, 0, ...]
         source_features = self._split_batch_cam(source_features, inv=True, num_cams=num_cams)
-
+        # source_features shape: [B * num_cams, C(sum(self.img_neck.out_channels)), H, W] e.g [6, 512, 16, 44]
         # predict image context feature, depth distribution
         depth_feature = self._forward_depth_net(
             source_features,
             mats_dict,
         )
+        # depth_feature shape: [B * num_cams, C(self.out_channels+ self.depth_channels), W, D] e.g [6, 150, 16, 44]
         if self.times is not None:
             t3.record()
             torch.cuda.synchronize()
             self.times['img_dep'].append(t2.elapsed_time(t3))
-
+        # extract image feature and depth distribution
         image_feature = depth_feature[:, self.depth_channels:(self.depth_channels + self.output_channels)]
-
+        # image_feature shape: [B * num_cams, C(self.out_channels), H, W] e.g [6, 80, 16, 44] -> C_IPV
+        # depth_occupancy represents the depth distribution for each pixel
         depth_occupancy = depth_feature[:, :self.depth_channels].softmax(
             dim=1, dtype=depth_feature.dtype)
-        img_feat_with_depth = depth_occupancy.unsqueeze(1) * image_feature.unsqueeze(2)
+        # depth_occupancy shape: [B * num_cams, D(self.depth_channels), H, W] e.g [6, 70, 16, 44]
 
+        # image_feat_with_depth represents the image feature with depth distribution
+        img_feat_with_depth = depth_occupancy.unsqueeze(1) * image_feature.unsqueeze(2)
+        # img_feat_with_depth shape: [B * num_cams, C(self.out_channels), D(self.depth_channels), H, W] e.g [6, 80, 70, 16, 44]
+        
         # calculate frustum grid within valid height
         geom_xyz, geom_xyz_valid = self.get_geometry_collapsed(
             mats_dict['sensor2ego_mats'][:, sweep_index, ...],
@@ -309,14 +343,19 @@ class RVTLSSFPN(BaseLSSFPN):
 
         geom_xyz_valid = self._split_batch_cam(geom_xyz_valid, inv=True, num_cams=num_cams).unsqueeze(1)
         img_feat_with_depth = (img_feat_with_depth * geom_xyz_valid).sum(3).unsqueeze(3)
-
+        # image_feat_with_depth shape: [B * num_cams, C(self.out_channels), D(self.depth_channels), 1, W] e.g [6, 80, 70, 1, 44]
         if self.radar_view_transform:
+            # pts_occuapncy shape: [B * num_cams, 1, D, W] e.g [6, 1, 70, 44]
             radar_occupancy = pts_occupancy.permute(0, 2, 1, 3).contiguous()
+            # radar_occupancy shape: [B * num_cams, D, 1, W] e.g [6, 70, 1, 44]
             image_feature_collapsed = (image_feature * geom_xyz_valid.max(2).values).sum(2).unsqueeze(2)
+            # image_feature_collapsed shape: [B * num_cams, C(self.out_channels), 1, W] e.g [6, 80, 1, 44]
             img_feat_with_radar = radar_occupancy.unsqueeze(1) * image_feature_collapsed.unsqueeze(2)
-
+            # img_feat_with_radar shape: [B * num_cams, C(self.out_channels), D(self.depth_channels), 1, W] e.g [6, 80, 70, 1, 44]
             img_context = torch.cat([img_feat_with_depth, img_feat_with_radar], dim=1)
+            # img_context shape: [B * num_cams, C((self.out_channels)*2), D(self.depth_channels), 1, W] e.g [6, 160, 70, 1, 44]
             img_context = self._forward_view_aggregation_net(img_context)
+            # img_context shape: [B * num_cams, C(self.out_channels), D(self.depth_channels), 1, W] e.g [6, 80, 70,  1, 44]
         else:
             img_context = img_feat_with_depth
         if self.times is not None:
@@ -325,21 +364,25 @@ class RVTLSSFPN(BaseLSSFPN):
             self.times['img_transform'].append(t3.elapsed_time(t4))
 
         img_context = self._split_batch_cam(img_context, num_cams=num_cams)
+        # img_context shape: [B, num_cams, C(self.out_channels), D(self.depth_channels), 1, W] e.g [1, 6, 80, 70, 1, 44]
         img_context = img_context.permute(0, 1, 3, 4, 5, 2).contiguous()
-
-        pts_context = self._split_batch_cam(pts_context, num_cams=num_cams)
+        # image_context shape: [B, num_cams, D(self.depth_channels), 1, W, C(self.out_channels)] e.g [1, 6, 70, 1, 44, 80]
+        pts_context = self._split_batch_cam(pts_context, num_cams=num_cams) # pts_context shape: [B*num_cams, C, D, W] e.g [ 6, 80, 70, 44]
+        # pts_context shape: [B, num_cams, C, D, W] e.g [1, 6, 80, 70, 44]
         pts_context = pts_context.unsqueeze(-2).permute(0, 1, 3, 4, 5, 2).contiguous()
-
+        # pts_context shape: [B, num_cams, D(self.depth_channels), 1, W, C(self.out_channels)] e.g [1, 6, 70, 44, 1, 80]
         fused_context = torch.cat([img_context, pts_context], dim=-1)
-
+        # fused_context shape: [B, num_cams, D(self.depth_channels), 1, W, C(self.out_channels*2)] e.g [1, 6, 70, 1, 44, 160]
         geom_xyz = ((geom_xyz - (self.voxel_coord - self.voxel_size / 2.0)) /
                     self.voxel_size).int()
         geom_xyz[..., 2] = 0  # collapse z-axis
         geo_pos = torch.ones_like(geom_xyz)
         
         # sparse voxel pooling
-        feature_map, _ = average_voxel_pooling(geom_xyz, fused_context.contiguous(), geo_pos,
+        feature_map, _ = average_voxel_pooling(geom_xyz, fused_context.contiguous(), geo_pos, #bev shape: [C,1,X,Y] where X,Y is 128
                                                self.voxel_num.cuda())
+        # feature_map shape: [B,self.out_channels*2, X, Y] e.g [1, 160, 128, 128] self.fuser_conf.bevshape which is 128x128
+
         if self.times is not None:
             t5.record()
             torch.cuda.synchronize()
@@ -423,6 +466,7 @@ class RVTLSSFPN(BaseLSSFPN):
                     ptss_context[:, sweep_index, ...] if ptss_context is not None else None,
                     ptss_occupancy[:, sweep_index, ...] if ptss_occupancy is not None else None,
                     return_depth=False)
+                # feature_map shape: [B, C, H, W]
                 ret_feature_list.append(feature_map)
 
         if return_depth:

@@ -171,6 +171,7 @@ class PtsBackbone(nn.Module):
             # plot_original_radar_points(res)
             res_voxels, res_coors, res_num_points = self.pts_voxel_layer(res)
             # visualize_voxels_with_points(res_voxels, res_coors, voxel_size=[8, 0.4, 2], point_cloud_range=[0, 2.0, 0, 704, 58.0, 2])
+            # visualize_voxels_with_points_distinct(res_voxels, res_coors, voxel_size=[8, 0.4, 2], point_cloud_range=[0, 2.0, 0, 704, 58.0, 2])
             voxels.append(res_voxels)
             coors.append(res_coors)
             num_points.append(res_num_points)
@@ -182,6 +183,34 @@ class PtsBackbone(nn.Module):
             coors_batch.append(coor_pad)
         coors_batch = torch.cat(coors_batch, dim=0)
         return voxels, num_points, coors_batch
+    def visualize_backbone_feature_maps(self, feature_maps):
+        # Visualize backbone feature maps
+        # Example code to plot intermediate feature maps
+        num_maps = feature_maps.size(1)  # Get the number of feature maps
+        fig, axes = plt.subplots(1, num_maps, figsize=(12, 4))
+        for i in range(num_maps):
+            axes[i].imshow(feature_maps[0, i].cpu().numpy(), cmap='viridis')
+            axes[i].axis('off')
+            axes[i].set_title(f'Feature Map {i+1}')
+        plt.tight_layout()
+        plt.show()
+    def visualize_context_features(self, context_features):
+        # Visualize context features
+        # Example code to plot feature maps
+        plt.figure(figsize=(8, 8))
+        plt.imshow(context_features.squeeze().cpu().numpy(), cmap='viridis')
+        plt.colorbar()
+        plt.title('Context Features')
+        plt.show()
+
+    def visualize_occupancy_grids(self, occupancy_grids):
+        # Visualize occupancy grids
+        # Example code to plot occupancy grids
+        plt.figure(figsize=(8, 8))
+        plt.imshow(occupancy_grids.squeeze().cpu().numpy(), cmap='binary', vmin=0, vmax=1)
+        plt.colorbar()
+        plt.title('Occupancy Grids')
+        plt.show()
 
     def _forward_single_sweep(self, pts):
         """
@@ -225,7 +254,7 @@ class PtsBackbone(nn.Module):
         # x shape is tuple of length 3 where each element is (B*N, C, H, W) e.g 6, 64, 140, 88),(6, 128, 70, 44),(6, 256, 35, 22)
         if self.pts_neck is not None:
             x = self.pts_neck(x)
-
+            # x[0] shape is (B*N, C(sum(self.pts_neck.out_channels)), H, W) e.g (6, 384, 35, 22)
         if self.times is not None:
             t3.record()
             torch.cuda.synchronize()
@@ -235,8 +264,10 @@ class PtsBackbone(nn.Module):
         x_occupancy = None
         if self.return_context:
             x_context = self.pred_context(x[-1]).unsqueeze(1)
+            # x_context shape is (B*N, 1, C(self.out_channels_pts), H, W) e.g (6, 1, 80, 70, 44)
         if self.return_occupancy:
             x_occupancy = self.pred_occupancy(x[-1]).unsqueeze(1).sigmoid()
+            # x_occupancy shape is (B*N, 1, 1, H, W) e.g (6, 1,1, 70, 44)
 
         if self.times is not None:
             t4.record()
