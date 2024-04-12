@@ -19,7 +19,7 @@ def visualize_input_images(sweep_imgs, sweep_idx=0, cam_idx=0):
     img = sweep_imgs[0, sweep_idx, cam_idx].cpu()
     imshow(img, title=f"Input Image - Sweep {sweep_idx}, Camera {cam_idx}")
 
-def visualize_pts_context(pts_context, sweep_idx=0, channel_idx=None):
+def visualize_pts_occupancy(pts_context, sweep_idx=0, channel_idx=None):
     """
     Visualizes the point cloud context for a given sweep and optionally a specific channel.
     """
@@ -73,7 +73,7 @@ def visualize_first_sweep_images(sweep_imgs):
     num_cams = first_sweep_imgs.shape[0]
 
     # Create a subplot for each camera
-    fig, axs = plt.subplots(1, num_cams, figsize=(15, 15))
+    fig, axs = plt.subplots(1, num_cams, figsize=(10, 5))
 
     for i in range(num_cams):
         # Get the image for the current camera
@@ -157,8 +157,43 @@ def visualize_attention_over_bev(attn_maps, bev_image, modality=0):
     plt.colorbar()
     plt.show()
 
-import torch
 import matplotlib.pyplot as plt
+
+def visualize_attention_over_and_with_bev(attn_maps, bev_image, modality=0):
+    bev_image = bev_image[0].detach().cpu().numpy()
+    attn_maps = attn_maps.cpu().numpy()
+
+    if bev_image.shape[0] > 1:
+        bev_image = bev_image.mean(axis=0)
+    
+    attn_sweep_modality = attn_maps[0, 0, :, modality, :, :, :]
+    attn_avg = attn_sweep_modality.mean(axis=(0, 1))
+
+    # Create a subplot for the BEV image and the attention overlay
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 8))
+
+    # Display BEV image
+    im1 = ax1.imshow(bev_image, cmap='viridis', alpha=0.8)
+    ax1.set_title("BEV Image")
+    ax1.axis('off')
+    # Create colorbar for BEV image on the left
+    fig.colorbar(im1, ax=ax1, orientation='vertical', fraction=0.046, pad=0.04)
+
+    # Display Attention Overlay
+    im2 = ax2.imshow(bev_image, cmap='viridis', alpha=0.4)  # BEV as a base
+    im3 = ax2.imshow(attn_avg, cmap='jet', alpha=0.9)  # Attention map overlay
+    ax2.set_title("Attention Overlay on BEV")
+    ax2.axis('off')
+    # Create colorbar for attention overlay on the right
+    fig.colorbar(im3, ax=ax2, orientation='vertical', fraction=0.046, pad=0.04)
+
+    # Show the plot
+    plt.tight_layout()
+    plt.show()
+
+# Call the function with your data
+# visualize_attention_over_and_with_bev(attn_maps, fused, 0) <- Replace with your tensor names
+
 
 def plot_attention_maps(attn_maps_tensor, modality=0):
     """
@@ -189,4 +224,58 @@ def plot_attention_maps(attn_maps_tensor, modality=0):
 
 # Example usage:
 # Assume attn_maps_tensor is a PyTorch tensor with the shape mentioned above.
-# plot_attention_maps(attn_maps_tensor, modality=0) # Plot the first modality
+# plot_attention_maps(attn_maps, modality=0) # Plot the first modality
+import matplotlib.pyplot as plt
+
+def visualize_all_components(fused, feats, attn_maps, modality_list):
+    fused = fused[0].detach().cpu().numpy().mean(axis=0)
+    feats = feats[0, 0].detach().cpu().numpy().mean(axis=0)
+    attn_maps = attn_maps.cpu().numpy()
+
+    num_plots = 2 + 2 * len(modality_list)  # fused, feats, and each modality for attn_maps and overlay
+    num_cols = 2  # Columns: fused, feats, and attention maps for each modality
+    num_rows = (num_plots + 1) // num_cols  # Calculate rows needed
+
+    fig, axs = plt.subplots(num_rows, num_cols, figsize=(15, num_rows * 5))
+    axs = axs.ravel()  # Flatten the array of axes
+
+    # Plot fused image
+    axs[0].imshow(fused, cmap='viridis')
+    axs[0].set_title('Fused Image')
+    axs[0].axis('off')
+    fig.colorbar(axs[0].images[0], ax=axs[0], fraction=0.046, pad=0.04)
+
+    # Plot feats image
+    axs[1].imshow(feats, cmap='viridis')
+    axs[1].set_title('Feats Image')
+    axs[1].axis('off')
+    fig.colorbar(axs[1].images[0], ax=axs[1], fraction=0.046, pad=0.04)
+
+    plot_idx = 2  # Starting index for subsequent plots
+    for modality in modality_list:
+        attn_sweep_modality = attn_maps[0, 0, :, modality, :, :, :].mean(axis=(0, 1))
+
+        # Plot attention map
+        axs[plot_idx].imshow(attn_sweep_modality, cmap='viridis', alpha=0.9)
+        axs[plot_idx].set_title(f'Attention Map Modality {modality}')
+        axs[plot_idx].axis('off')
+        fig.colorbar(axs[plot_idx].images[0], ax=axs[plot_idx], fraction=0.046, pad=0.04)
+        plot_idx += 1
+
+        # Plot attention overlay
+        overlay = axs[plot_idx].imshow(fused, cmap='viridis', alpha=0.6)  # base image
+        overlay_attn = axs[plot_idx].imshow(attn_sweep_modality, cmap='jet', alpha=0.9)  # attention overlay
+        axs[plot_idx].set_title(f'Attention Overlay Modality {modality}')
+        axs[plot_idx].axis('off')
+
+        # Add a colorbar for the overlay. The colorbar will correspond to the attention overlay.
+        fig.colorbar(overlay_attn, ax=axs[plot_idx], fraction=0.046, pad=0.04)
+
+        plot_idx += 1
+
+    plt.tight_layout()
+    plt.show()
+
+# Call the function with your tensors
+# visualize_all_components(fused, feats, attn_maps, [0, 1])
+
