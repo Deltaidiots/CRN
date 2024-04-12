@@ -202,12 +202,14 @@ class MFAFuser(nn.Module):
             self.times['fusion_layer'].append(t2.elapsed_time(t3))
         # bev_queries: [bs, num_queries, embed_dims]
         output = bev_queries.permute(0, 2, 1).contiguous().reshape(bs, self.embed_dims, h, w)
+        bs, num_queries, num_heads, num_modalities, num_samples = attention_weights.shape
+        attention_map = attention_weights.permute(0, 2, 3, 4, 1).contiguous().reshape(bs, self.num_heads, self.num_modalities, num_samples, h, w)
         # Assuming attention_weights is the tensor with shape [1, 16384, 4, 2, 4]
         # Average the attention across heads, modalities, and sampling points
-        attention_avg = attention_weights.mean(dim=[2, 3, 4])  # Resulting shape: [1, 16384]
+        #attention_avg = attention_weights.mean(dim=[2, 4])  # Resulting shape: [1, 16384]
 
         # Reshape to the original spatial grid (HxW, where H=W=128 for a square grid)
-        attention_map = attention_avg.reshape(-1, h, w)  # Reshaping to [1, H, W]
+        #spatial_attn_weights = attention_avg[:,:,0].view(-1, h, w)   # Reshaping to [1, H, W]
         if self.times is not None:
             t4.record()
             torch.cuda.synchronize()
@@ -251,6 +253,6 @@ class MFAFuser(nn.Module):
                 ret_feature_list.append(feature_map)
                 ret_attn_map_list.append(attn_map)
         # reshape attn_map_list to [bs, num_Sweeps, h, w]
-        attn_maps_tensor = torch.stack(ret_attn_map_list, dim=1)
+        attn_maps_tensor = torch.stack(ret_attn_map_list, dim=1) # shape: [bs, num_sweeps, num_heads, num_modalities, num_samples, h, w]
         output = self.reduce_conv(torch.cat(ret_feature_list, 1)).float()
         return output, self.times, attn_maps_tensor

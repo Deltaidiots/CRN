@@ -100,7 +100,9 @@ class CameraRadarNetDet(BaseBEVDepth):
                 self.times = None
             elif self.idx == 100:
                 self.times = self.times_dict
+            # write a function to visuazlie the first sweep images , it should plot for all the cameras
 
+ 
             ptss_context, ptss_occupancy, self.times = self.backbone_pts(sweep_ptss,
                                                                          times=self.times)
             # shape of ptss_context: (B, num_sweeps, C, D, W)
@@ -111,8 +113,8 @@ class CameraRadarNetDet(BaseBEVDepth):
                                                   ptss_occupancy,
                                                   times=self.times)
             # shape of feats: (B, num_sweeps, C, H, W) converted to bev grid of 128x128 here c includes image plus depth
-            fused, self.times, attn_maps = self.fuser(feats, times=self.times)
-            # shape of fused: (B, C, H, W) C is embedding size
+            fused, self.times, attn_maps = self.fuser(feats, times=self.times) 
+            # shape of fused: (B, C, H, W) C is embedding size & attn_maps: [bs, num_sweeps, num_heads, num_modalities, num_samples, h, w]
             preds, self.times = self.head(fused, times=self.times)
 
             if self.idx == 1000:
