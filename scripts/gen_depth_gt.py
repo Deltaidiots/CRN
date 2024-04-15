@@ -117,6 +117,7 @@ def worker(info):
     pc.translate(np.array(lidar_ego_pose["translation"]))
 
     for i, cam_key in enumerate(cam_keys):
+        file_name = os.path.split(info["cam_infos"][cam_key]["filename"])[-1]
         output_file_path = os.path.join(data_root, "depth_gt", f"{file_name}.bin")
         # Only save if file doesn't exist
         if not os.path.exists(output_file_path):
@@ -124,7 +125,6 @@ def worker(info):
             cam_ego_pose = info["cam_infos"][cam_key]["ego_pose"]
             img = mmcv.imread(os.path.join(data_root, info["cam_infos"][cam_key]["filename"]))
             pts_img, depth = map_pointcloud_to_image(pc.points.copy(), img, cam_calibrated_sensor, cam_ego_pose)
-            file_name = os.path.split(info["cam_infos"][cam_key]["filename"])[-1]
             np.concatenate([pts_img[:2, :].T, depth[:, None]], axis=1).astype(np.float32).flatten().tofile(
                 os.path.join(data_root, "depth_gt", f"{file_name}.bin")
             )
